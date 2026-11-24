@@ -1,0 +1,100 @@
+/* Sidebar webview styles (VS Code theme variables only). */
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.mdt-side {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mdt-card {
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--vscode-sideBar-background, transparent);
+}
+
+.mdt-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.mdt-row {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.mdt-ok {
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.mdt-bad {
+  color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground));
+}
+
+.mdt-detail {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  margin-top: 2px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.mdt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mdt-btn {
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border, transparent);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mdt-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
+}
+
+.mdt-sel-source {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-left: 2px solid var(--vscode-panel-border, transparent);
+  padding-left: 6px;
+  margin-bottom: 6px;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.mdt-sel-trans {
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}

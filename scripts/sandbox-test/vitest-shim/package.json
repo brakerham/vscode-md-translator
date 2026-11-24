@@ -1,0 +1,6 @@
+{
+  "name": "vitest",
+  "version": "0.0.0-shim",
+  "description": "Sandbox-only vitest shim over node:test. Lives in a local node_modules so compiled tests resolve this instead of the real vitest.",
+  "main": "index.js"
+}

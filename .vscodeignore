@@ -1,0 +1,17 @@
+.vscode/**
+.vscode-test/**
+src/**
+test/**
+media/**
+sample/**
+scripts/**
+node_modules/**
+esbuild.mjs
+vitest.config.ts
+tsconfig.json
+eslint.config.mjs
+install.log
+smoke-report.json
+*.log
+*.vsix
+.github/**

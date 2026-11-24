@@ -1,0 +1,261 @@
+{
+  "name": "markdown-ai-translator",
+  "displayName": "Markdown AI Translator",
+  "description": "AI-powered immersive translation for Markdown documents: full-document translation preview with bilingual mode and selection translation, powered by OpenAI-compatible APIs.",
+  "version": "0.1.0",
+  "publisher": "brakerham",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "markdown",
+    "translate",
+    "translation",
+    "ai",
+    "openai",
+    "llm",
+    "bilingual",
+    "i18n",
+    "chatgpt",
+    "deepseek"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/brakerham/vscode-md-translator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/brakerham/vscode-md-translator/issues"
+  },
+  "homepage": "https://github.com/brakerham/vscode-md-translator#readme",
+  "icon": "icons/icon.png",
+  "galleryBanner": {
+    "color": "#16324f",
+    "theme": "dark"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "markdownAiTranslator.translateDocument",
+        "title": "%command.translateDocument%",
+        "category": "%command.category%",
+        "icon": "$(globe)"
+      },
+      {
+        "command": "markdownAiTranslator.retranslateDocument",
+        "title": "%command.retranslateDocument%",
+        "category": "%command.category%",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "markdownAiTranslator.translateSelection",
+        "title": "%command.translateSelection%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "markdownAiTranslator.setApiKey",
+        "title": "%command.setApiKey%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "markdownAiTranslator.clearApiKey",
+        "title": "%command.clearApiKey%",
+        "category": "%command.category%"
+      },
+      {
+        "command": "markdownAiTranslator.openSettings",
+        "title": "%command.openSettings%",
+        "category": "%command.category%"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "markdownAiTranslator.translateDocument",
+          "when": "resourceLangId == markdown",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "markdownAiTranslator.translateSelection",
+          "when": "resourceLangId == markdown && editorHasSelection",
+          "group": "1_translation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "markdownAiTranslator.translateDocument",
+          "when": "resourceLangId == markdown"
+        },
+        {
+          "command": "markdownAiTranslator.retranslateDocument",
+          "when": "resourceLangId == markdown"
+        },
+        {
+          "command": "markdownAiTranslator.translateSelection",
+          "when": "resourceLangId == markdown && editorHasSelection"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "markdownAiTranslator",
+          "title": "%views.container%",
+          "icon": "icons/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "markdownAiTranslator": [
+        {
+          "type": "markdownAiTranslator.sidebarView",
+          "name": "%views.sidebar%",
+          "icon": "$(globe)"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%config.title%",
+      "properties": {
+        "markdownAiTranslator.apiBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "order": 1,
+          "markdownDescription": "%config.apiBaseUrl%"
+        },
+        "markdownAiTranslator.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "order": 2,
+          "markdownDescription": "%config.model%"
+        },
+        "markdownAiTranslator.sourceLanguage": {
+          "type": "string",
+          "default": "auto",
+          "order": 3,
+          "markdownDescription": "%config.sourceLanguage%"
+        },
+        "markdownAiTranslator.targetLanguage": {
+          "type": "string",
+          "default": "简体中文",
+          "order": 4,
+          "markdownDescription": "%config.targetLanguage%"
+        },
+        "markdownAiTranslator.systemPrompt": {
+          "type": "string",
+          "default": "You are a professional technical documentation translator.\nTranslate the given technical documentation text from {sourceLanguage} to {targetLanguage}.\n\nRequirements:\n1. Translate accurately and faithfully; never omit any information present in the source text.\n2. Never add explanations, comments, or content that is not in the source text.\n3. Preserve the technical semantics of the original text.\n4. Preserve technical terms, API names, function names, variable names, project names, and product names as-is.\n5. Preserve all Markdown inline markup exactly, including inline code spans, emphasis, and links.\n6. Never translate or alter inline code, URLs, file paths, HTML tags, math formulas, or code blocks.\n7. For important technical terms, you may keep the original English term in parentheses at first occurrence.\n8. Keep the tone professional and consistent with technical documentation conventions.",
+          "order": 5,
+          "markdownDescription": "%config.systemPrompt%",
+          "editPresentation": "multilineText"
+        },
+        "markdownAiTranslator.temperature": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0,
+          "maximum": 2,
+          "order": 6,
+          "markdownDescription": "%config.temperature%"
+        },
+        "markdownAiTranslator.translationMode": {
+          "type": "string",
+          "default": "translated",
+          "order": 7,
+          "markdownDescription": "%config.translationMode%",
+          "enum": [
+            "translated",
+            "bilingual",
+            "source"
+          ],
+          "enumDescriptions": [
+            "%config.translationMode.translated%",
+            "%config.translationMode.bilingual%",
+            "%config.translationMode.source%"
+          ]
+        },
+        "markdownAiTranslator.requestTimeout": {
+          "type": "number",
+          "default": 60000,
+          "minimum": 5000,
+          "maximum": 600000,
+          "order": 8,
+          "markdownDescription": "%config.requestTimeout%"
+        },
+        "markdownAiTranslator.maxConcurrency": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 8,
+          "order": 9,
+          "markdownDescription": "%config.maxConcurrency%"
+        },
+        "markdownAiTranslator.maxTokensPerRequest": {
+          "type": "number",
+          "default": 4000,
+          "minimum": 200,
+          "maximum": 30000,
+          "order": 10,
+          "markdownDescription": "%config.maxTokensPerRequest%"
+        },
+        "markdownAiTranslator.maxRetries": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "order": 11,
+          "markdownDescription": "%config.maxRetries%"
+        },
+        "markdownAiTranslator.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "order": 12,
+          "markdownDescription": "%config.cacheEnabled%"
+        },
+        "markdownAiTranslator.cacheTtlDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 1,
+          "maximum": 365,
+          "order": 13,
+          "markdownDescription": "%config.cacheTtlDays%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "vscode:prepublish": "npm run build",
+    "package": "npm run build && vsce package"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^13.0.9",
+    "@types/node": "^22.10.2",
+    "@types/sanitize-html": "^2.13.0",
+    "@types/vscode": "~1.95.0",
+    "@vscode/codicons": "^0.0.36",
+    "@vscode/vsce": "^3.2.2",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.17.0",
+    "katex": "^0.16.21",
+    "markdown-it": "^13.0.2",
+    "markdown-it-anchor": "^8.6.7",
+    "markdown-it-front-matter": "^0.2.4",
+    "markdown-it-katex": "^2.0.3",
+    "markdown-it-task-lists": "^2.1.1",
+    "mermaid": "^10.9.3",
+    "sanitize-html": "^2.14.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.2",
+    "vitest": "^3.0.5"
+  }
+}

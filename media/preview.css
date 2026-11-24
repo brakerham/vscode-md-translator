@@ -1,0 +1,384 @@
+/**
+ * Stylesheet for the Markdown AI Translator preview webview.
+ *
+ * Mirrors the native VS Code Markdown preview closely and adapts to light,
+ * dark and high-contrast themes exclusively through VS Code CSS variables
+ * (no hard-coded colors).
+ */
+
+/* The template uses the `hidden` attribute for initially hidden widgets;
+   the explicit display rules below must not override it. */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  color: var(--vscode-editor-foreground);
+  background-color: var(--vscode-editor-background);
+  font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ---------------------------------------------------------------- */
+/* Toolbar                                                           */
+/* ---------------------------------------------------------------- */
+
+#mdt-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+#mdt-status {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#mdt-status.mdt-warn {
+  color: var(--vscode-editorWarning-foreground);
+}
+
+.mdt-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 3px 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.mdt-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.mdt-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mdt-seg {
+  flex-shrink: 0;
+  display: inline-flex;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mdt-seg-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.mdt-seg-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.mdt-seg-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+/* ---------------------------------------------------------------- */
+/* Markdown content                                                  */
+/* ---------------------------------------------------------------- */
+
+.md-content {
+  padding: 0 20px 16px;
+  max-width: 900px;
+}
+
+.md-content h1 {
+  font-size: 1.8em;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.2em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.md-content h2 {
+  font-size: 1.4em;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.2em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.md-content h3 {
+  font-size: 1.2em;
+  font-weight: 600;
+  margin: 1em 0 0.5em;
+}
+
+.md-content h4,
+.md-content h5,
+.md-content h6 {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 1em 0 0.5em;
+}
+
+.md-content p {
+  margin: 0 0 16px;
+}
+
+.md-content ul,
+.md-content ol {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+
+.md-content li {
+  margin: 4px 0;
+}
+
+.md-content li > p {
+  margin-bottom: 4px;
+}
+
+.md-content code {
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-textCodeBlock-background);
+  color: var(--vscode-textPreformat-foreground);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.md-content pre {
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow: auto;
+  margin: 0 0 16px;
+}
+
+.md-content pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: var(--vscode-editor-font-size, 13px);
+}
+
+.md-content blockquote {
+  margin: 0 0 16px;
+  padding: 0 1em;
+  border-left: 4px solid var(--vscode-textBlockQuote-border);
+  background: var(--vscode-textBlockQuote-background);
+}
+
+.md-content table {
+  border-collapse: collapse;
+  margin: 0 0 16px;
+}
+
+.md-content th,
+.md-content td {
+  border: 1px solid var(--vscode-panel-border);
+  padding: 6px 13px;
+}
+
+.md-content th {
+  background: var(--vscode-editor-lineHighlightBackground);
+  font-weight: 600;
+}
+
+.md-content tbody tr:nth-child(2n) {
+  background: var(--vscode-textBlockQuote-background);
+}
+
+.md-content a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+
+.md-content a:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+.md-content hr {
+  border: none;
+  border-top: 1px solid var(--vscode-panel-border);
+  margin: 24px 0;
+}
+
+.md-content img {
+  max-width: 100%;
+}
+
+.md-content .mdt-frontmatter {
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
+  margin: 0 0 16px;
+  color: var(--vscode-textPreformat-foreground);
+}
+
+/* KaTeX rendered by the host markdown pipeline. */
+.katex {
+  font-size: 1.05em;
+}
+
+.katex-block {
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+/* ---------------------------------------------------------------- */
+/* Bilingual mode markers                                            */
+/* ---------------------------------------------------------------- */
+
+.mdt-trans {
+  border-left: 2px solid var(--vscode-textLink-foreground);
+  padding-left: 10px;
+  margin-bottom: 4px;
+}
+
+.mdt-trans-cell {
+  border-top: 1px dashed var(--vscode-panel-border);
+  padding-top: 4px;
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Mermaid                                                           */
+/* ---------------------------------------------------------------- */
+
+.mermaid-rendered {
+  margin: 0 0 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.mermaid-rendered svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-content pre.mdt-mermaid-failed {
+  border: 1px dashed var(--vscode-editorWarning-foreground);
+}
+
+/* ---------------------------------------------------------------- */
+/* Floating selection-translation widgets                            */
+/* ---------------------------------------------------------------- */
+
+.mdt-sel-btn {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 3px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: var(--vscode-widget-shadow);
+}
+
+.mdt-sel-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.mdt-card {
+  position: fixed;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-editorWidget-foreground);
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 4px;
+  box-shadow: var(--vscode-widget-shadow);
+  max-width: min(480px, calc(100vw - 24px));
+  min-width: 260px;
+  padding: 8px 10px;
+}
+
+.mdt-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.mdt-card-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.mdt-card-body {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.mdt-card-body .mdt-spin {
+  margin-right: 4px;
+}
+
+.mdt-error {
+  color: var(--vscode-errorForeground);
+}
+
+/* ---------------------------------------------------------------- */
+/* Spinner                                                           */
+/* ---------------------------------------------------------------- */
+
+.mdt-spin {
+  display: inline-block;
+  animation: mdt-spin 1s linear infinite;
+}
+
+@keyframes mdt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
