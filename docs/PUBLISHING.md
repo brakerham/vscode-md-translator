@@ -28,6 +28,15 @@ Marketplace. Nothing is published without explicit confirmation.
 - [ ] `MDT_SMOKE=1 code --extensionDevelopmentPath=<repo>` produces a
       `smoke-report.json` where every check is `ok: true`.
 
+Note for restricted/sandboxed environments: if the shell restricts workspace
+write throughput or child-process pipes (e.g. an agent harness sandbox),
+`pwsh scripts/mdt-dev.ps1` mirrors the project into a fast temp directory and
+runs install/compile/test/build/package there (the sandbox test stage uses a
+node:test shim because Vitest's esbuild helpers cannot spawn in such
+environments), then copies `dist/` and the `.vsix` back. The Extension
+Development Host itself cannot run in such sandboxes — launch it from a
+normal terminal.
+
 ## Packaging
 
 - [ ] `npm run package` produces `markdown-ai-translator-<version>.vsix`
