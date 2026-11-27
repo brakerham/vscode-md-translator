@@ -1,44 +1,17 @@
 /**
  * Token-tree extraction for the Markdown AI Translator.
  *
- * Walks the token tree produced by `md.parse` and collects every translatable
- * text run. The markdown-it (v13) tree layout this walker relies on:
- *
- * - Block open/close tokens (`paragraph_open`, `heading_open`, `th_open`,
- *   `td_open`, ...) are entries of the top-level Token[] array, interleaved
- *   with self-contained `inline` tokens that hold the block's text.
- * - Table cells are the exception: their `inline` tokens are attached as
- *   `children` of the `th_open` / `td_open` token instead of being top-level
- *   siblings.
- * - `inline.children` is flat: `link_open` ... `link_close` delimit link
- *   text, `image` tokens are self-contained, and everything else (code,
- *   math, raw HTML, soft breaks) is not translatable.
+ * Walks the markdown-it token tree. Blocks normally have flat open/close
+ * tokens with a separate inline token. Inline children carry the text and
+ * delimiters for links, images, code and other markup.
  */
 
-import type Token from 'markdown-it/lib/token';
+import type { Token } from 'markdown-it';
 import type { SegmentKind } from '../common/types';
 import type { ExtractResult, Segment } from './pipeline';
 
 /** Block openers that carry the sequential `data-mdt-block` marker. */
 const MARKED_BLOCK_TYPES = new Set(['paragraph_open', 'heading_open', 'th_open', 'td_open']);
-
-/** Deletes previously applied translation state from every token in the tree. */
-export function clearTranslationState(tokens: Token[]): void {
-  const visit = (token: Token): void => {
-    if (token.meta !== null && typeof token.meta === 'object') {
-      delete token.meta.translation;
-      delete token.meta.altTranslation;
-    }
-    if (token.children !== null) {
-      for (const child of token.children) {
-        visit(child);
-      }
-    }
-  };
-  for (const token of tokens) {
-    visit(token);
-  }
-}
 
 /**
  * Assigns a sequential 0-based `data-mdt-block` marker to EVERY paragraph,
@@ -49,8 +22,11 @@ export function clearTranslationState(tokens: Token[]): void {
 export function assignBlockMarkers(tokens: Token[]): number {
   let index = 0;
   for (const token of tokens) {
+    if (token.type === 'paragraph_close' && token.hidden) token.hidden = false;
     if (MARKED_BLOCK_TYPES.has(token.type)) {
       token.attrSet('data-mdt-block', String(index));
+      // Tight list paragraphs are hidden by markdown-it; keep a marker for pairing.
+      if (token.type === 'paragraph_open' && token.hidden) token.hidden = false;
       index += 1;
     }
   }
@@ -107,10 +83,30 @@ function nearestBlockIndex(stack: Token[]): number | null {
 }
 
 /** Collects the translatable segments from one `inline` token. */
+// Recognize common standalone relative/absolute paths and drive paths in prose.
+const PROTECTED_TEXT = /(?:https?:\/\/|www\.)[^\s<>]+|\b[A-Za-z]:[\\/][^\s<>]+|(?:^|(?<=[\s("'=]))(?:\.{1,2}[\\/]|~[\\/]|[\\/]|[\w@.-]+[\\/])[\w@./\\-]+|\b[\w-]+\.(?:md|mdx|json|ya?ml|toml|ts|tsx|js|jsx|py|rs|html|css|txt|png|gif|svg)\b/gi;
+
+type Emit = (text: string, kind: SegmentKind, token: Token, attr: 'alt' | undefined,
+  blockIndex: number, start: number, end: number) => void;
+
+function emitProse(text: string, emit: (start: number, end: number) => void): void {
+  const slice = (start: number, end: number): void => {
+    const prose = text.slice(start, end);
+    if (!/\p{L}/u.test(prose)) return;
+    emit(start + (prose.length - prose.trimStart().length), end - (prose.length - prose.trimEnd().length));
+  };
+  let offset = 0;
+  for (const match of text.matchAll(PROTECTED_TEXT)) {
+    slice(offset, match.index);
+    offset = match.index + match[0].length;
+  }
+  slice(offset, text.length);
+}
+
 function walkInline(
   inline: Token,
   blockStack: Token[],
-  emit: (text: string, kind: SegmentKind, token: Token, attr: 'alt' | undefined, blockIndex: number) => void,
+  emit: Emit,
 ): void {
   const children = inline.children;
   if (children === null) {
@@ -125,29 +121,29 @@ function walkInline(
   const kind = blockKind(blockStack);
   // Links cannot nest in CommonMark, so a depth counter is the small inline
   // stack needed to detect link context.
-  let linkDepth = 0;
+  let link: 'plain' | 'label' | 'auto' = 'plain';
   for (const token of children) {
     switch (token.type) {
       case 'link_open':
-        linkDepth += 1;
+        link = token.markup === 'linkify' || token.markup === 'autolink' ? 'auto' : 'label';
         break;
       case 'link_close':
-        if (linkDepth > 0) {
-          linkDepth -= 1;
-        }
+        link = 'plain';
         break;
       case 'text':
-        if (token.content.trim().length > 0) {
-          emit(token.content, linkDepth > 0 ? 'link_text' : kind, token, undefined, blockIndex);
+        if (link !== 'auto') {
+          emitProse(token.content, (start, end) => {
+            emit(token.content.slice(start, end), link === 'label' ? 'link_text' : kind, token, undefined, blockIndex, start, end);
+          });
         }
         break;
       case 'image': {
         // markdown-it 13 keeps the alt text in the token children (the alt
         // attribute is empty); token.content carries the concatenated text.
-        const attrAlt = token.attrGet('alt') ?? '';
+        const attrAlt = String(token.attrGet('alt') ?? '');
         const alt = attrAlt.trim().length > 0 ? attrAlt : (token.content ?? '');
-        if (alt.trim().length > 0) {
-          emit(alt, 'image_alt', token, 'alt', blockIndex);
+        if (!token.children?.some((child) => child.type === 'code_inline' || child.type.startsWith('math_'))) {
+          emitProse(alt, (start, end) => emit(alt.slice(start, end), 'image_alt', token, 'alt', blockIndex, start, end));
         }
         break;
       }
@@ -161,15 +157,12 @@ function walkInline(
 }
 
 /**
- * Idempotent segment extraction: clears previous translation state, assigns
- * block markers and collects every translatable segment in document order.
+ * Assigns block markers and collects translatable segments in document order.
  */
 export function extractSegments(tokens: Token[]): ExtractResult {
-  clearTranslationState(tokens);
   const blockCount = assignBlockMarkers(tokens);
 
   const segments: Segment[] = [];
-  const translatedBlocks = new Set<number>();
   let counter = 0;
   const stack: Token[] = [];
 
@@ -179,10 +172,11 @@ export function extractSegments(tokens: Token[]): ExtractResult {
     token: Token,
     attr: 'alt' | undefined,
     blockIndex: number,
+    start: number,
+    end: number,
   ): void => {
-    segments.push({ id: `s${counter}`, kind, text, blockIndex, token, attr });
+    segments.push({ id: `s${counter}`, kind, text, blockIndex, token, attr, start, end });
     counter += 1;
-    translatedBlocks.add(blockIndex);
   };
 
   for (const token of tokens) {

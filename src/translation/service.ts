@@ -64,6 +64,8 @@ function toTranslationError(err: unknown): TranslationError {
   }
   if (err instanceof ProviderError) {
     switch (err.kind) {
+      case 'config':
+        return new TranslationError('config', err.message);
       case 'auth':
         return new TranslationError('auth', err.message, err.statusCode);
       case 'rate-limited':
@@ -137,6 +139,12 @@ export class TranslationService {
    * every requested id (cached results included). Throws TranslationError.
    */
   async translateSegments(segments: SegmentEntry[], opts: TranslateOptions): Promise<Map<string, string>> {
+    const batch = new AbortController();
+    const signal = opts.signal ? AbortSignal.any([opts.signal, batch.signal]) : batch.signal;
+    const checkAborted = (): void => {
+      if (signal.aborted) throw new TranslationError('aborted', 'Translation aborted.');
+    };
+    checkAborted();
     const total = segments.length;
     if (total === 0) {
       opts.onProgress?.(0, 0);
@@ -167,6 +175,7 @@ export class TranslationService {
     }
 
     const ctx: ProviderContext = {
+      apiBaseUrl: opts.apiBaseUrl,
       systemPrompt: opts.systemPrompt,
       sourceLanguage: opts.sourceLanguage,
       targetLanguage: opts.targetLanguage,
@@ -178,7 +187,7 @@ export class TranslationService {
     const pending: UniqueEntry[] = [];
     if (opts.cache && !opts.forceRefresh) {
       for (const unique of uniqueList) {
-        const cached = opts.cache.get(cacheKeyFor(unique.text, ctx));
+        const cached = opts.cache.get(cacheKeyFor(unique.text, ctx, unique.kind));
         if (cached !== undefined) {
           for (const id of unique.ids) {
             resolvedById.set(id, cached);
@@ -201,6 +210,7 @@ export class TranslationService {
       opts.onProgress?.(done, total);
     };
     report(); // After the cache phase (skipped when nothing changed).
+    checkAborted();
 
     // 3) Everything came from the cache (or was empty): we are done.
     if (pending.length === 0) {
@@ -220,14 +230,13 @@ export class TranslationService {
         text: u.text,
       }));
       for (let attempt = 0; ; attempt++) {
-        if (opts.signal?.aborted) {
-          throw new TranslationError('aborted', 'Translation aborted.');
-        }
+        checkAborted();
         try {
           const results = await this.provider.translateBatch(entries, ctx, {
             timeoutMs: opts.timeoutMs,
-            signal: opts.signal,
+            signal,
           });
+          checkAborted();
           const byId = new Map<string, string>();
           for (const result of results) {
             if (typeof result.id === 'string' && typeof result.text === 'string') {
@@ -250,23 +259,21 @@ export class TranslationService {
             for (const id of unique.ids) {
               resolvedById.set(id, value);
             }
-            // Write back to the cache regardless of forceRefresh.
-            if (opts.cache) {
-              opts.cache.set(cacheKeyFor(unique.text, ctx), value);
-            }
             done += unique.ids.length;
           }
           this.logger?.info(`chunk ${chunkIndex + 1}/${chunks.length}: ${chunk.length} segments`);
           return;
         } catch (err) {
-          if (opts.signal?.aborted) {
-            throw new TranslationError('aborted', 'Translation aborted.');
-          }
+          checkAborted();
           if (err instanceof ProviderError) {
             if (isRetryableProviderError(err) && attempt < opts.retries) {
               const status = err.statusCode !== undefined ? ` (HTTP ${err.statusCode})` : '';
               this.logger?.warn(`attempt ${attempt + 2} after ${err.kind}${status}`);
-              await sleep(500 * 2 ** attempt + Math.random() * 250, opts.signal);
+              try {
+                await sleep(500 * 2 ** attempt + Math.random() * 250, signal);
+              } catch {
+                checkAborted();
+              }
               continue;
             }
             throw toTranslationError(err);
@@ -276,64 +283,32 @@ export class TranslationService {
       }
     };
 
-    // 4) Worker pool over the chunk queue with fail-fast semantics.
+    // 4) Workers share a queue. A failure cancels sibling requests for this run.
     let nextIndex = 0;
-    let firstFailure: TranslationError | undefined;
-    let resolvePool: () => void = () => {};
-    const recordFailure = (err: TranslationError): void => {
-      if (firstFailure) {
-        return;
+    const worker = async (): Promise<void> => {
+      while (!signal.aborted && nextIndex < chunks.length) {
+        const index = nextIndex++;
+        await processChunk(chunks[index], index);
+        if (!signal.aborted) report();
       }
-      firstFailure = err;
-      const status = err.statusCode !== undefined ? ` (HTTP ${err.statusCode})` : '';
-      this.logger?.error(`translation failed: ${err.kind}${status}`);
-      resolvePool(); // Fail fast: do not start new chunks.
     };
-
-    await new Promise<void>((resolve) => {
-      resolvePool = resolve;
-      const concurrency = Math.max(1, opts.maxConcurrency);
-      let active = 0;
-      const launch = (): void => {
-        while (!firstFailure && nextIndex < chunks.length && active < concurrency) {
-          const index = nextIndex++;
-          active++;
-          void (async () => {
-            try {
-              await processChunk(chunks[index], index);
-              if (!firstFailure) {
-                report();
-              }
-            } catch (err) {
-              recordFailure(toTranslationError(err));
-              return;
-            } finally {
-              active--;
-              if (firstFailure) {
-                return; // In-flight chunks may settle; their results are ignored.
-              }
-              if (opts.signal?.aborted) {
-                recordFailure(new TranslationError('aborted', 'Translation aborted.'));
-                return;
-              }
-              launch();
-              if (active === 0) {
-                resolvePool();
-              }
-            }
-          })();
-        }
-      };
-      launch();
-    });
-
-    if (firstFailure) {
-      throw firstFailure;
+    const concurrency = Math.min(chunks.length, Math.max(1, Math.floor(opts.maxConcurrency)));
+    try {
+      await Promise.all(Array.from({ length: concurrency }, worker));
+      checkAborted();
+    } catch (err) {
+      batch.abort();
+      const failure = toTranslationError(err);
+      this.logger?.error(`translation failed: ${failure.kind}`);
+      throw failure;
     }
-    if (opts.signal?.aborted) {
-      throw new TranslationError('aborted', 'Translation aborted.');
+
+    // Commit only a complete run, including a successful forced refresh.
+    for (const unique of pending) {
+      const value = resolvedById.get(unique.ids[0]);
+      if (value !== undefined) opts.cache?.set(cacheKeyFor(unique.text, ctx, unique.kind), value);
     }
-    report(); // Ensures a final (total, total) call on success.
+    report();
     return buildResultMap(segments, resolvedById);
   }
 

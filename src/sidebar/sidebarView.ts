@@ -2,6 +2,7 @@
  * Sidebar view: lightweight companion panel with API status, document
  * translation status and the latest selection translation.
  */
+import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { COMMANDS, SIDEBAR_VIEW_TYPE } from '../common/constants';
 import type {
@@ -13,6 +14,7 @@ import type {
 } from '../common/types';
 import type { ConfigProvider } from '../config/configuration';
 import type { StatusCenter } from '../preview/statusCenter';
+import { completionEndpoint } from '../translation/openaiProvider';
 
 export interface SidebarHtmlParts {
   nonce: string;
@@ -156,9 +158,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [mediaDir],
     };
-    const nonce = Buffer.from(
-      Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)),
-    ).toString('base64');
+    const nonce = randomBytes(16).toString('base64');
     const wv = webviewView.webview;
     webviewView.webview.html = buildSidebarHtml({
       nonce,
@@ -200,7 +200,11 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private async refreshState(): Promise<void> {
     const config = this.deps.configProvider.read();
     this.state.hasApiKey = await this.deps.configProvider.hasApiKey();
-    this.state.apiBaseUrl = config.apiBaseUrl;
+    try {
+      this.state.apiBaseUrl = completionEndpoint(config.apiBaseUrl);
+    } catch {
+      this.state.apiBaseUrl = '';
+    }
     this.state.model = config.model;
     this.state.sourceLanguage = config.sourceLanguage;
     this.state.targetLanguage = config.targetLanguage;

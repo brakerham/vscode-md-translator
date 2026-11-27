@@ -8,6 +8,7 @@ export interface CombinedAbort {
   readonly signal: AbortSignal;
   /** True once the internal timeout fired (as opposed to the external signal). */
   didTimeout(): boolean;
+  dispose(): void;
 }
 
 /** DOMException is not available in every environment; degrade gracefully. */
@@ -21,78 +22,28 @@ function abortError(message = 'The operation was aborted.'): Error {
   }
 }
 
-/** Reads the optional abort reason without depending on newer DOM libs. */
-function signalReason(signal: AbortSignal): unknown {
-  return (signal as { reason?: unknown }).reason;
-}
-
-/** Unrefs a timer when the runtime supports it (Node); best effort only. */
-function tryUnref(timer: ReturnType<typeof setTimeout>): void {
-  try {
-    (timer as unknown as { unref?: () => void }).unref?.();
-  } catch {
-    // Unref is an optimisation; ignore environments without it.
-  }
-}
-
-/**
- * Combines an external AbortSignal with an internal timeout into a single
- * signal. Prefers AbortSignal.any/AbortSignal.timeout and falls back to a
- * manual AbortController on older runtimes. `didTimeout()` distinguishes an
- * internal timeout from an external abort, so callers can map the fetch
- * failure to the right error kind.
- */
+/** Combines caller cancellation with a deadline covering the response body. */
 export function combineAbortSignals(
   external: AbortSignal | undefined,
   timeoutMs: number,
 ): CombinedAbort {
-  let timedOut = false;
-  const markTimedOut = (): void => {
-    timedOut = true;
-  };
-
-  if (typeof AbortSignal.any === 'function' && typeof AbortSignal.timeout === 'function') {
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    timeoutSignal.addEventListener('abort', markTimedOut, { once: true });
-    const parts: AbortSignal[] = [timeoutSignal];
-    if (external) {
-      parts.push(external);
-    }
-    const signal = AbortSignal.any(parts);
-    return { signal, didTimeout: () => timedOut };
-  }
-
-  // Manual fallback for runtimes without AbortSignal.any / AbortSignal.timeout.
   const controller = new AbortController();
+  let timedOut = false;
   const timer = setTimeout(() => {
-    markTimedOut();
+    timedOut = true;
     controller.abort(abortError('Request timed out.'));
   }, timeoutMs);
-  tryUnref(timer);
-
-  const forwardExternal = (): void => {
-    if (external) {
-      controller.abort(signalReason(external));
-    }
-  };
-
-  controller.signal.addEventListener(
-    'abort',
-    () => {
+  const forwardExternal = (): void => controller.abort(external?.reason);
+  if (external?.aborted) forwardExternal();
+  else external?.addEventListener('abort', forwardExternal, { once: true });
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    dispose: () => {
       clearTimeout(timer);
       external?.removeEventListener('abort', forwardExternal);
     },
-    { once: true },
-  );
-
-  if (external) {
-    if (external.aborted) {
-      forwardExternal();
-    } else {
-      external.addEventListener('abort', forwardExternal, { once: true });
-    }
-  }
-  return { signal: controller.signal, didTimeout: () => timedOut };
+  };
 }
 
 /** Resolves after ms; rejects early with an AbortError if the signal aborts. */

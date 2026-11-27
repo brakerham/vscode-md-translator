@@ -95,10 +95,29 @@ export function sanitizeRenderedHtml(
     disallowedTagsMode: 'discard',
     // sanitize-html strips data: URIs by default; base64-embedded images are
     // legitimate document content and must survive sanitization.
+    allowedSchemes: ['http', 'https', 'mailto'],
     allowedSchemesByTag: { img: ['data', 'http', 'https'] },
+    allowProtocolRelative: false,
+    allowedStyles: {
+      span: {
+        'height': [/^-?[\d.]+em$/],
+        'width': [/^-?[\d.]+em$/],
+        'min-width': [/^-?[\d.]+em$/],
+        'top': [/^-?[\d.]+em$/],
+        'vertical-align': [/^-?[\d.]+em$/],
+        'margin-left': [/^-?[\d.]+em$/],
+        'margin-right': [/^-?[\d.]+em$/],
+        'border-bottom-width': [/^[\d.]+em$/],
+        'color': [/^#[a-f\d]{3,8}$/i, /^[a-z]+$/i],
+      },
+    },
     transformTags: {
       img: (tagName, attribs) => {
         const src = attribs.src;
+        if (src && /^data:/i.test(src) && !/^data:image\/(?:png|gif|jpe?g|webp|avif);base64,[\da-z+/=]+$/i.test(src)) {
+          delete attribs.src;
+          return { tagName, attribs };
+        }
         if (src !== undefined && !ABSOLUTE_SRC_RE.test(src) && resolveImageSrc !== undefined) {
           try {
             const resolved = resolveImageSrc(src);

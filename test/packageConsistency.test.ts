@@ -6,6 +6,8 @@ import {
   CONFIG_KEYS,
   CONFIG_SECTION,
   DEFAULT_SYSTEM_PROMPT,
+  EXTENSION_ID,
+  SIDEBAR_VIEW_TYPE,
 } from '../src/common/constants';
 
 // Tests run with the project root as the working directory (npm scripts).
@@ -44,13 +46,25 @@ describe('package.json consistency', () => {
     ).toBe(true);
   });
 
-  it('has marketplace-ready metadata', () => {
+  it('has complete candidate Marketplace metadata', () => {
     expect(pkg.name).toMatch(/^[a-z0-9-]+$/);
-    expect(pkg.publisher).toBeTruthy();
+    expect([pkg.publisher, pkg.name].join('.')).toBe(EXTENSION_ID);
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(pkg.license).toBeTruthy();
     expect(pkg.engines?.vscode).toBeTruthy();
-    expect(pkg.icon).toBeTruthy();
+    const icon = readFileSync(join(root, pkg.icon));
+    expect(icon.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(icon.readUInt32BE(16)).toBeGreaterThanOrEqual(128);
+    expect(icon.readUInt32BE(20)).toBeGreaterThanOrEqual(128);
     expect(pkg.repository?.url).toContain('github.com');
+  });
+
+  it('declares the sidebar as a webview and keeps its endpoint in user settings', () => {
+    expect(pkg.contributes.views[CONFIG_SECTION]).toContainEqual(expect.objectContaining({
+      id: SIDEBAR_VIEW_TYPE,
+      type: 'webview',
+    }));
+    expect(props[CONFIG_SECTION + '.apiBaseUrl']).toMatchObject({ scope: 'machine' });
   });
 
   it('references an existing activity bar icon', () => {

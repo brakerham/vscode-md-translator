@@ -5,3 +5,4 @@ smoke-report.json
 .DS_Store
 *.log
 .vscode-test/
+*.tmpdir/

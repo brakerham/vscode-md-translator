@@ -32,6 +32,7 @@ export interface PreviewPanelDeps {
   statusCenter: StatusCenter;
   logger: Logger;
   column?: vscode.ViewColumn;
+  force?: boolean;
 }
 
 interface StatusPayload {
@@ -50,10 +51,14 @@ export class TranslationPreviewPanel {
   private readonly onDidDisposeEmitter = new vscode.EventEmitter<void>();
   readonly onDidDispose = this.onDidDisposeEmitter.event;
 
-  private mdDoc: MarkdownDocument | null = null;
   private mode: TranslationMode;
+  private document: vscode.TextDocument;
   private hasApiKey = false;
   private initSent = false;
+  private ready = false;
+  private disposed = false;
+  private pendingForce: boolean;
+  private selectionAbort: AbortController | undefined;
   private runId = 0;
   private abortController: AbortController | null = null;
   private dirtyWhileHidden = false;
@@ -61,7 +66,9 @@ export class TranslationPreviewPanel {
   private readonly refreshDebounced: Debounced<[boolean]>;
 
   constructor(private readonly deps: PreviewPanelDeps) {
+    this.document = deps.document;
     this.mode = deps.configProvider.read().translationMode;
+    this.pendingForce = deps.force ?? false;
 
     this.panel = vscode.window.createWebviewPanel(
       PREVIEW_VIEW_TYPE,
@@ -78,20 +85,14 @@ export class TranslationPreviewPanel {
 
     this.router = new WebviewMessageRouter({
       logger: deps.logger,
-      translateAll: () => {
-        void this.refresh(false);
-      },
-      retranslate: () => {
-        void this.refresh(true);
-      },
+      translateAll: () => this.refresh(false),
+      retranslate: () => this.refresh(true),
       cancel: () => this.cancel(),
       setMode: (mode) => {
         this.mode = mode;
       },
       translateSelection: (text) => this.translateSelection(text),
-      openLink: (href) => {
-        void this.openLink(href);
-      },
+      openLink: (href) => this.openLink(href),
     });
 
     this.panel.webview.onDidReceiveMessage(
@@ -101,7 +102,7 @@ export class TranslationPreviewPanel {
           return;
         }
         void this.router.handle(msg, (reply) => {
-          void this.panel.webview.postMessage(reply);
+          void this.post(reply);
         });
       },
       undefined,
@@ -123,7 +124,10 @@ export class TranslationPreviewPanel {
         }
       }),
       vscode.workspace.onDidChangeTextDocument((e) => {
-        if (e.document.uri.toString() === deps.document.uri.toString()) {
+        if (e.document.uri.toString() === this.document.uri.toString()) {
+          this.document = e.document;
+          this.abortController?.abort();
+          this.runId++;
           if (this.panel.visible) {
             this.refreshDebounced(false);
           } else {
@@ -134,6 +138,7 @@ export class TranslationPreviewPanel {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration(`${CONFIG_SECTION}.${CONFIG_KEYS.translationMode}`)) {
           this.mode = deps.configProvider.read().translationMode;
+    this.pendingForce = deps.force ?? false;
           void this.pushConfig();
         }
       }),
@@ -147,21 +152,42 @@ export class TranslationPreviewPanel {
     return this.panel.visible;
   }
 
-  reveal(): void {
+  reveal(document: vscode.TextDocument): void {
+    const replaced = this.document !== document;
+    this.document = document;
     this.panel.reveal(this.panel.viewColumn, false);
+    if (replaced) this.refreshDebounced(false);
   }
 
   /** Re-runs extraction + translation. `force` skips the cache. */
   async refresh(force: boolean): Promise<void> {
-    this.runId++;
-    const runId = this.runId;
+    if (this.disposed) return;
+    if (!this.ready) {
+      this.pendingForce ||= force;
+      return;
+    }
+    this.refreshDebounced.cancel();
+    this.dirtyWhileHidden = false;
+    const runId = ++this.runId;
     this.abortController?.abort();
     const abort = new AbortController();
     this.abortController = abort;
 
-    const text = this.deps.document.getText();
+    const text = this.document.getText();
     this.publishStatus({ state: 'extracting', done: 0, total: 0 });
 
+    try {
+      await this.runTranslation(text, force, runId, abort);
+    } catch {
+      if (runId === this.runId) {
+        this.publishStatus({ state: 'error', done: 0, total: 0, message: 'Failed to render the Markdown document.' });
+      }
+    } finally {
+      if (runId === this.runId) this.abortController = null;
+    }
+  }
+
+  private async runTranslation(text: string, force: boolean, runId: number, abort: AbortController): Promise<void> {
     let mdDoc: MarkdownDocument;
     try {
       mdDoc = this.deps.pipeline.parse(text);
@@ -170,7 +196,6 @@ export class TranslationPreviewPanel {
       this.publishStatus({ state: 'error', done: 0, total: 0, message: 'Failed to parse the Markdown document.' });
       return;
     }
-    this.mdDoc = mdDoc;
 
     let segments;
     try {
@@ -186,6 +211,7 @@ export class TranslationPreviewPanel {
     if (segments.length === 0) {
       this.translatedBlocks = [];
       await this.post({ type: 'updateHtml', sourceHtml, translatedHtml: sourceHtml, translatedBlocks: [] });
+      if (runId !== this.runId) return;
       this.publishStatus({ state: 'done', done: 0, total: 0 });
       return;
     }
@@ -214,6 +240,7 @@ export class TranslationPreviewPanel {
         translatedHtml,
         translatedBlocks: this.translatedBlocks,
       });
+      if (runId !== this.runId) return;
       this.publishStatus({ state: 'done', done: segments.length, total: segments.length });
     } catch (err) {
       if (runId !== this.runId) return;
@@ -226,14 +253,18 @@ export class TranslationPreviewPanel {
       // Show the fresh source; drop stale pairings so bilingual mode stays consistent.
       this.translatedBlocks = [];
       await this.post({ type: 'updateHtml', sourceHtml, translatedHtml: sourceHtml, translatedBlocks: [] });
-      this.publishStatus({ state: 'error', done: 0, total: segments.length, message });
+      if (runId === this.runId) this.publishStatus({ state: 'error', done: 0, total: segments.length, message });
     }
   }
 
   cancel(): void {
     this.runId++;
+    this.refreshDebounced.cancel();
+    this.pendingForce = false;
+    this.dirtyWhileHidden = false;
     this.abortController?.abort();
     this.abortController = null;
+    this.publishStatus({ state: 'cancelled', done: 0, total: 0 });
   }
 
   dispose(): void {
@@ -249,8 +280,8 @@ export class TranslationPreviewPanel {
 
     let sourceHtml = '';
     try {
-      this.mdDoc = this.deps.pipeline.parse(this.deps.document.getText());
-      sourceHtml = this.renderHtml(this.mdDoc, 'src');
+      const doc = this.deps.pipeline.parse(this.document.getText());
+      sourceHtml = this.renderHtml(doc, 'src');
     } catch (err) {
       this.deps.logger.error(`Initial parse failed: ${errorMessage(err)}`);
     }
@@ -269,8 +300,9 @@ export class TranslationPreviewPanel {
       mermaidScriptUri: this.mermaidScriptUri(),
     });
 
-    // First open: translate right away (cache makes this cheap for unchanged text).
-    void this.refresh(false);
+    if (this.disposed) return;
+    this.ready = true;
+    void this.refresh(this.pendingForce);
   }
 
   private async pushConfig(): Promise<void> {
@@ -280,21 +312,30 @@ export class TranslationPreviewPanel {
 
   private async translateSelection(text: string): Promise<string> {
     const config = this.deps.configProvider.read();
-    if (!(await this.deps.configProvider.getApiKey())) {
+    if (!(await this.deps.configProvider.hasApiKey())) {
       throw new UserError('No API key configured. Run the "Markdown AI Translator: Set API Key" command first.');
     }
-    const opts = this.deps.configProvider.toTranslateOptions(config, { cache: this.deps.cache });
-    const translated = await this.deps.service.translateText(text, opts);
-    this.deps.statusCenter.publishSelection({ source: text, translation: translated });
-    return translated;
+    if (this.disposed) throw new UserError('Preview closed.');
+    this.selectionAbort?.abort();
+    const abort = new AbortController();
+    this.selectionAbort = abort;
+    const opts = this.deps.configProvider.toTranslateOptions(config, { cache: this.deps.cache, signal: abort.signal });
+    try {
+      const translated = await this.deps.service.translateText(text, opts);
+      if (!abort.signal.aborted) this.deps.statusCenter.publishSelection({ source: text, translation: translated });
+      return translated;
+    } finally {
+      if (this.selectionAbort === abort) this.selectionAbort = undefined;
+    }
   }
 
   private async openLink(href: string): Promise<void> {
+    if (href.trimStart() !== href || [...href].some((ch) => ch.charCodeAt(0) < 32 || ch.charCodeAt(0) === 127)) return;
     if (/^(https?|mailto):/i.test(href)) {
       await vscode.env.openExternal(vscode.Uri.parse(href));
       return;
     }
-    if (href.startsWith('#')) return;
+    if (/^(?:[#/\\]|[a-z][a-z\d+.-]*:)/i.test(href)) return;
     const target = this.resolveLocalUri(href);
     if (!target) {
       void vscode.window.showWarningMessage(`Markdown AI Translator: cannot open link "${href}".`);
@@ -319,8 +360,15 @@ export class TranslationPreviewPanel {
     } catch {
       /* keep raw */
     }
+    if (/^(?:[/\\]|[a-z][a-z\d+.-]*:)/i.test(p) || p.includes('\\')) return undefined;
     try {
-      return vscode.Uri.joinPath(this.deps.document.uri, '..', p);
+      const target = vscode.Uri.joinPath(this.deps.document.uri, '..', p);
+      const normalize = (path: string): string => target.scheme === 'file' && process.platform === 'win32' ? path.toLowerCase() : path;
+      const path = normalize(target.path);
+      return this.computeResourceRoots().some((root) =>
+        root.scheme === target.scheme && root.authority === target.authority &&
+        path.startsWith(normalize(root.path).replace(/\/$/, '') + '/'),
+      ) ? target : undefined;
     } catch {
       return undefined;
     }
@@ -423,7 +471,10 @@ export class TranslationPreviewPanel {
   }
 
   private cleanup(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.runId++;
+    this.selectionAbort?.abort();
     this.abortController?.abort();
     this.abortController = null;
     this.refreshDebounced.cancel();

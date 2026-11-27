@@ -271,7 +271,7 @@ describe('TranslationService.translateSegments', () => {
     expect(controller.signal.aborted).toBe(true);
     expect(provider.signalsSeen.length).toBeGreaterThan(0);
     for (const signal of provider.signalsSeen) {
-      expect(signal).toBe(controller.signal);
+      expect(signal?.aborted).toBe(true);
     }
   });
 

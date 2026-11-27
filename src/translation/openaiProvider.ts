@@ -16,9 +16,9 @@ import { combineAbortSignals } from './utils';
 
 export interface OpenAICompatibleProviderOptions {
   /** Base URL, e.g. "https://api.openai.com/v1". */
-  baseUrl: string;
+  baseUrl?: string;
   /** Returns the API key from SecretStorage; must never be sent to the webview. */
-  getApiKey: () => Promise<string | undefined>;
+  getApiKey: (endpoint: string) => Promise<string | undefined>;
   /** Injectable fetch for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
   /** Send response_format json_object and transparently retry without it on HTTP 400. */
@@ -26,28 +26,24 @@ export interface OpenAICompatibleProviderOptions {
   logger?: Logger;
 }
 
-/** Longest raw-response snippet allowed inside an invalid-response error. */
-const MAX_INVALID_RESPONSE_EXCERPT = 300;
-/** Longest raw-response snippet allowed inside an HTTP error message. */
-const MAX_HTTP_EXCERPT = 200;
-/** Longest message we ever echo from an unexpected error. */
-const MAX_ERROR_MESSAGE = 300;
-
-/** Collapses whitespace and truncates raw text to a log-safe snippet. */
-function excerpt(text: string, max: number): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max)}…`;
-}
-
-/** Builds a safe single-line message from an unknown thrown value. */
-function safeErrorMessage(err: unknown, secret?: string): string {
-  const message = err instanceof Error ? err.message : String(err);
-  let cleaned = message.replace(/\s+/g, ' ').trim();
-  if (secret) {
-    // Defensive scrub: the key must never surface in an error message.
-    cleaned = cleaned.replaceAll(secret, '***');
+/** Allows HTTPS providers and plain HTTP only for local model servers. */
+export function completionEndpoint(baseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(baseUrl.trim());
+  } catch {
+    throw new ProviderError('config', 'Enter a valid API base URL.');
   }
-  return cleaned.length <= MAX_ERROR_MESSAGE ? cleaned : `${cleaned.slice(0, MAX_ERROR_MESSAGE)}…`;
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
+      url.username || url.password || url.search || url.hash) {
+    throw new ProviderError('config', 'Use an HTTPS API URL or a local loopback HTTP URL, without credentials, query or fragment.');
+  }
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  if (!url.pathname.endsWith('/chat/completions')) {
+    url.pathname += '/chat/completions';
+  }
+  return url.toString();
 }
 
 function isTimeoutError(err: unknown): boolean {
@@ -73,20 +69,11 @@ function extractContent(json: unknown): unknown {
   return message?.content;
 }
 
-/** Reads the response body text, tolerating a failed body read. */
-async function readResponseText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return '';
-  }
-}
-
 export class OpenAICompatibleProvider implements TranslationProvider {
   readonly id = 'openai-compatible';
 
-  private readonly baseUrl: string;
-  private readonly getApiKey: () => Promise<string | undefined>;
+  private readonly baseUrl?: string;
+  private readonly getApiKey: (endpoint: string) => Promise<string | undefined>;
   private readonly fetchImpl: typeof fetch;
   private readonly strictJson: boolean;
   private readonly logger?: Logger;
@@ -108,51 +95,36 @@ export class OpenAICompatibleProvider implements TranslationProvider {
       return [];
     }
 
-    const key = await this.getApiKey();
+    if (opts.signal?.aborted) throw new ProviderError('aborted', 'Request aborted');
+    const url = completionEndpoint(ctx.apiBaseUrl ?? this.baseUrl ?? '');
+    const key = await this.getApiKey(url);
     if (!key) {
       throw new ProviderError('auth', 'API key is not set. Run the "Set API Key" command.');
     }
 
-    const url = this.buildUrl();
     // Transparently drop response_format when the model rejects it (HTTP 400).
     let includeResponseFormat = this.strictJson;
     for (;;) {
-      const response = await this.send(url, key, entries, ctx, opts, includeResponseFormat);
+      const { status, ok, text } = await this.send(url, key, entries, ctx, opts, includeResponseFormat);
 
-      if (response.status === 400 && includeResponseFormat) {
+      if (status === 400 && includeResponseFormat) {
         this.logger?.debug('provider rejected response_format; retrying without it');
         includeResponseFormat = false;
         continue;
       }
 
-      const text = await readResponseText(response);
-      if (response.status === 401 || response.status === 403) {
-        throw new ProviderError('auth', 'API key invalid or unauthorized. Check your API key.', response.status);
+      if (status === 401 || status === 403) {
+        throw new ProviderError('auth', 'API key invalid or unauthorized. Check your API key.', status);
       }
-      if (response.status === 429) {
-        throw new ProviderError('rate-limited', 'Rate limited by the API provider.', response.status);
+      if (status === 429) {
+        throw new ProviderError('rate-limited', 'Rate limited by the API provider.', status);
       }
-      if (!response.ok) {
-        const snippet = excerpt(text, MAX_HTTP_EXCERPT);
-        this.logger?.warn(`HTTP ${response.status} from ${this.id}: ${snippet}`);
-        throw new ProviderError(
-          'http',
-          `HTTP ${response.status} from the API provider.${snippet ? ` ${snippet}` : ''}`,
-          response.status,
-        );
+      if (!ok) {
+        throw new ProviderError('http', `HTTP ${status} from the API provider.`, status);
       }
 
       return this.parseResults(entries, text);
     }
-  }
-
-  /** Trims trailing slashes and appends /chat/completions exactly once. */
-  private buildUrl(): string {
-    const base = this.baseUrl.trim().replace(/\/+$/, '');
-    if (base.endsWith('/chat/completions')) {
-      return base;
-    }
-    return `${base}/chat/completions`;
   }
 
   private async send(
@@ -162,7 +134,7 @@ export class OpenAICompatibleProvider implements TranslationProvider {
     ctx: ProviderContext,
     opts: ProviderRequestOptions,
     includeResponseFormat: boolean,
-  ): Promise<Response> {
+  ): Promise<{ status: number; ok: boolean; text: string }> {
     const body: Record<string, unknown> = {
       model: ctx.model,
       temperature: ctx.temperature,
@@ -181,12 +153,21 @@ export class OpenAICompatibleProvider implements TranslationProvider {
 
     const combined = combineAbortSignals(opts.signal, opts.timeoutMs);
     try {
-      return await this.fetchImpl(url, {
+      const response = await this.fetchImpl(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify(body),
         signal: combined.signal,
+        redirect: 'error',
       });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return { status: response.status, ok: false, text: '' };
+      }
+      const text = await response.text();
+      combined.signal.throwIfAborted();
+      return { status: response.status, ok: true, text };
+
     } catch (err) {
       if (opts.signal?.aborted) {
         throw new ProviderError('aborted', 'Request aborted');
@@ -194,7 +175,9 @@ export class OpenAICompatibleProvider implements TranslationProvider {
       if (combined.didTimeout() || isTimeoutError(err)) {
         throw new ProviderError('timeout', `Request timed out after ${opts.timeoutMs} ms.`);
       }
-      throw new ProviderError('network', `Network error: ${safeErrorMessage(err, key)}`);
+      throw new ProviderError('network', 'Could not complete the request to the API provider.');
+    } finally {
+      combined.dispose();
     }
   }
 
@@ -203,7 +186,6 @@ export class OpenAICompatibleProvider implements TranslationProvider {
     try {
       json = JSON.parse(rawText);
     } catch {
-      this.logInvalid(rawText);
       throw new ProviderError('invalid-response', 'The API returned a response that is not valid JSON.');
     }
 
@@ -218,14 +200,12 @@ export class OpenAICompatibleProvider implements TranslationProvider {
         candidate = undefined;
       }
       if (!candidate) {
-        this.logInvalid(content);
         throw new ProviderError('invalid-response', 'The API returned content that is not valid JSON.');
       }
     } else if (content !== undefined) {
       // Some providers return the content already parsed as an object.
       candidate = asRecord(content);
       if (!candidate) {
-        this.logInvalid(rawText);
         throw new ProviderError('invalid-response', 'The API returned unexpected translation content.');
       }
     } else {
@@ -236,7 +216,6 @@ export class OpenAICompatibleProvider implements TranslationProvider {
     // Prefer an explicit "translations" wrapper; otherwise use the object itself.
     const translations = candidate ? asRecord(candidate.translations) ?? candidate : undefined;
     if (!translations) {
-      this.logInvalid(rawText);
       throw new ProviderError('invalid-response', 'The API response did not contain any translation content.');
     }
 
@@ -251,18 +230,12 @@ export class OpenAICompatibleProvider implements TranslationProvider {
       results.push({ id: entry.id, text: value });
     }
     if (missing.length > 0) {
-      const snippet = excerpt(rawText, MAX_INVALID_RESPONSE_EXCERPT);
-      this.logger?.warn(`invalid response from ${this.id}: ${snippet}`);
       throw new ProviderError(
         'invalid-response',
-        `The API response is missing translations for ids: ${missing.join(', ')}.${snippet ? ` Response: ${snippet}` : ''}`,
+        `The API response is missing translations for ids: ${missing.join(', ')}.`,
       );
     }
     return results;
   }
 
-  /** Logs only a truncated snippet of an invalid response (never the key). */
-  private logInvalid(source: string): void {
-    this.logger?.warn(`invalid response from ${this.id}: ${excerpt(source, MAX_INVALID_RESPONSE_EXCERPT)}`);
-  }
 }

@@ -1,6 +1,5 @@
 /**
  * Prompt construction, token estimation and cache key computation.
- * Final implementation — do not modify without coordinating with the lead.
  */
 import { createHash } from 'node:crypto';
 import { DEFAULT_SYSTEM_PROMPT } from '../common/constants';
@@ -72,9 +71,13 @@ export function estimateTokens(text: string): number {
 /** Cache key covering the text, model, languages and system prompt. */
 export function cacheKeyFor(
   text: string,
-  ctx: Pick<ProviderContext, 'model' | 'sourceLanguage' | 'targetLanguage' | 'systemPrompt'>,
+  ctx: ProviderContext,
+  kind: string,
 ): string {
-  return createHash('sha1')
-    .update([text, ctx.model, ctx.sourceLanguage, ctx.targetLanguage, ctx.systemPrompt].join('\u0000'), 'utf8')
+  return createHash('sha256')
+    .update(JSON.stringify([
+      'markdown-translation-v2', ctx.apiBaseUrl, ctx.model, ctx.sourceLanguage,
+      ctx.targetLanguage, ctx.systemPrompt, ctx.temperature, kind, text,
+    ]), 'utf8')
     .digest('hex');
 }

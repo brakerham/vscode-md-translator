@@ -79,7 +79,7 @@ describe('markdown extraction', () => {
     const doc = pipeline.parse(md);
     const { segments } = doc.extractSegments();
 
-    expect(segments.map((s) => s.text)).toEqual(['Title', 'Use ', ' here.']);
+    expect(segments.map((s) => s.text)).toEqual(['Title', 'Use', 'here.']);
     const allText = segments.map((s) => s.text).join('|');
     expect(allText).not.toContain('print');
     expect(allText).not.toContain('python');

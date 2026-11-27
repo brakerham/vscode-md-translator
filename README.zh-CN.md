@@ -1,160 +1,73 @@
 # Markdown AI Translator
 
-面向开发者的 Markdown AI 翻译 VS Code 扩展：在编辑器旁打开翻译预览，
-用 AI 把英文技术文档翻译成中文（或任意目标语言），**完全不改动原始
-Markdown 文件**。
+[English](README.md) · [发布指南](docs/PUBLISHING.md) · [变更日志](CHANGELOG.md)
 
-- **全文翻译**：在独立预览面板中渲染译文，界面贴近 VS Code 原生
-  Markdown Preview。
-- **结构保护**：代码块、行内代码、URL、链接地址、文件路径、HTML 标签、
-  数学公式、Mermaid 源码、Front Matter 一律不翻译、不修改、不破坏。
-- **双语对照**：原文与译文按块配对展示（标题、段落、列表项、引用、
-  表格单元格）。
-- **划词翻译**：在预览中选中文本 → 出现浮动翻译按钮 → 浮动卡片展示
-  结果（支持复制、关闭）；也支持在 Markdown 源码编辑器中翻译选区。
-- **OpenAI 兼容 API**：兼容 OpenAI、Azure OpenAI、DeepSeek、Moonshot、
-  Kimi、Ollama、LM Studio 等所有兼容服务。
-- API Key 保存在 VS Code **SecretStorage** 中：绝不写入 `settings.json`、
-  绝不发送给 Webview、绝不出现在日志里。
+在 VS Code 中阅读 Markdown 技术文档时，可以在编辑器旁打开翻译预览，切换原文、译文和双语对照。翻译过程不会改写 Markdown 源文件。
 
-> 本扩展为独立原创产品，与任何其他翻译工具无关联，未使用任何第三方
-> 名称、Logo 或品牌。
+![VS Code 编辑器和双语翻译预览](docs/images/bilingual.png)
 
-## 环境要求
-
-- VS Code `1.95.0` 及以上。
-- 可访问的 OpenAI 兼容 chat completions 接口及 API Key。
+[操作 GIF](docs/images/preview-demo.gif) 和截图采用本机模拟服务返回的固定示例译文。
 
 ## 快速开始
 
-1. 安装扩展（`markdown-ai-translator-*.vsix` →「从 VSIX 安装…」，发布后
-   也可从 Marketplace 安装）。
-2. 执行命令 **Markdown AI Translator: Set API Key**，粘贴你的 API Key。
-3. （可选）在设置中修改 `markdownAiTranslator.apiBaseUrl` 和
-   `markdownAiTranslator.model` 以适配你的服务商。
-4. 打开一个 Markdown 文件，点击编辑器标题栏的**地球按钮**——翻译预览
-   会在旁边打开并开始翻译。
-5. 在预览工具栏切换 **原文 / 译文 / 双语** 模式；点击 **重新翻译**
-   可绕过缓存强制重新翻译。
+1. 使用 VS Code 桌面版 1.95 或以上版本，在「扩展 → … → 从 VSIX 安装」中打开本地 VSIX。
+2. 在**用户设置**中填写扩展的 API Base URL 和模型。默认配置指向 OpenAI。
+3. 运行 **Markdown AI Translator: 设置 API Key**，为当前端点保存凭据。如果环回地址上的本地服务关闭了鉴权，可填写 `local-only` 等临时值，扩展仍会把它放入 Bearer 请求头。旧开发版本的用户需要为当前端点重新输入一次。
+4. 打开 Markdown 文件，点击标题栏的地球图标，或运行**翻译文档**命令。右侧预览会开始翻译。
+5. 在工具栏切换**原文／译文／双语**。**重新翻译**会绕过缓存。**取消**会停止当前文档任务。
 
-## 功能详解
+## 功能与边界
 
-### 全文翻译
+- 每个 Markdown 文档复用一个预览面板。编辑后，可见的面板在短暂延时后刷新。隐藏面板在再次显示时处理期间发生的编辑。有效缓存可复用配置相同的未改文本。
+- 通过 markdown-it token 提取正文，译文按 ID 回填。双语模式支持标题、段落、列表、引用及表格单元格。全文翻译跳过代码块、行内代码、Mermaid 源码、可解析的公式、YAML front matter、原始 HTML 块、链接和图片目标，以及可识别的 URL 和路径。链接显示文本和常规图片替代文本可以翻译。必须保留的特殊路径或标识符请用反引号包裹。
+- 文档按近似 token 数分批请求，并可设置每次文档任务的并发上限。请求超时覆盖响应正文。可重试错误会按退避策略重试。单个超长文本段仍可能超过设定的分块估算。
+- 在预览中选择文字，点击浮动的**翻译**按钮，可查看、复制和关闭译文卡片。起点在代码内的选区不会显示按钮。编辑器中的**翻译选中文本**命令会在侧栏显示结果，起点在围栏代码块内时先询问确认。[划词结果截图](docs/images/selection-result.png)
+- 活动栏的翻译侧栏显示当前端点是否已配置密钥、最近的文档状态事件与最近一次选区译文，并提供常用命令。
 
-- 基于 Markdown AST（markdown-it）而非字符串替换：将需要翻译的文本
-  片段提取为带唯一 ID 的段，以结构化 JSON 发给模型，再把结果回填到
-  相同的 AST 节点上。
-- 长文档自动**分块**（可配置 token 预算），**并发受限**请求，带单请求
-  超时、**指数退避重试**、响应校验与取消。
-- 结果**本地缓存**（可配置有效期）。编辑文档时只翻译新增或变化的文本
-  段，未变化的段落直接命中缓存——输入过程中不会重复翻译整篇文档。
-- 同一文档复用同一个预览面板（在 `ViewColumn.Beside` 打开），文档变化
-  时自动刷新。
+## 提供商兼容性
 
-### 永不翻译的内容
+扩展调用非流式 OpenAI 风格的 Chat Completions，发送 Bearer 请求头、模型和温度。若 JSON 模式请求返回 HTTP 400，会去掉该字段再尝试一次。模型仍需按约定为全部片段返回 JSON。
 
-- 围栏代码块及其语言标识（含 `mermaid`）、行内代码、URL、链接/图片
-  地址、文件路径、HTML 标签及其属性、数学公式（`$…$`、`$$…$$`）、
-  Mermaid 图源码、YAML Front Matter。
-- 原始 HTML 块在渲染前会经过安全清洗（sanitize）。
+| 提供商 | 配置示例 | 验证情况 |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | 已核对接口文档，未进行真实联调。[官方文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) |
+| DeepSeek | `https://api.deepseek.com` | 已核对接口文档，未进行真实联调。[官方文档](https://api-docs.deepseek.com/api/create-chat-completion) |
+| Moonshot / Kimi | 以 Kimi 账号显示的端点为准 | 兼容候选，未进行真实联调。[开发平台](https://platform.kimi.ai/) |
+| Ollama | `http://127.0.0.1:11434/v1` | 已核对接口文档，未运行真实服务或模型。[官方文档](https://docs.ollama.com/api/openai-compatibility) |
+| LM Studio | `http://127.0.0.1:1234/v1` | 已核对接口文档，未运行真实服务或模型。[官方文档](https://lmstudio.ai/docs/developer/openai-compat) |
+| Azure OpenAI | 依部署而定 | 需要查询参数、专用鉴权头或自动刷新令牌的部署超出当前适配器范围，未进行真实联调。[官方文档](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle) |
 
-### 划词翻译
+通用协议通过自动化测试和本机 HTTP 模拟服务验证。上表各服务均未被调用。
 
-- 预览内：选中文本 → 选区附近出现**翻译**按钮 → 点击后浮动卡片展示
-  译文，支持**复制**与**关闭**；代码块内的选区不提供翻译按钮。
-- 编辑器内：运行 **Markdown AI Translator: Translate Selection**（右键
-  菜单或命令面板）。若选区疑似代码会先确认。结果显示在翻译侧边栏中，
-  可一键复制。
+## 命令与设置
 
-### 侧边栏
+在命令面板检索 **Markdown AI Translator**，可找到全文翻译、重新翻译、选区翻译、设置和清除 API Key，以及打开扩展设置。配置项都以 `markdownAiTranslator.` 开头。
 
-Activity Bar 图标（可拖到 Secondary Sidebar 与 Claude Code、Codex 等
-并排）提供 API 状态、当前文档翻译进度与最近的划词翻译结果。
+| 配置 | 默认值 | 用途 |
+| --- | --- | --- |
+| `apiBaseUrl` | `https://api.openai.com/v1` | 在用户设置中配置。远程用 HTTPS，环回地址可用 HTTP。 |
+| `model` | `gpt-4o-mini` | 服务端模型 ID。 |
+| `sourceLanguage` | `auto` | 让模型识别源语言，或使用指定语言。 |
+| `targetLanguage` | `简体中文` | 目标语言。 |
+| `systemPrompt` | 技术翻译提示词 | 支持 `{sourceLanguage}` 和 `{targetLanguage}`。 |
+| `temperature` | `0.3` | 发给模型的采样温度。 |
+| `translationMode` | `translated` | 预览的默认显示模式。 |
+| `requestTimeout` | `60000` | 每次请求的超时毫秒数，含响应正文。 |
+| `maxConcurrency` | `3` | 单次文档任务内的最大并发请求数。 |
+| `maxTokensPerRequest` | `4000` | 分块估算预算。 |
+| `maxRetries` | `2` | 可重试错误的重试次数。 |
+| `cacheEnabled` | `true` | 读取及写入持久化翻译缓存。 |
+| `cacheTtlDays` | `30` | 缓存结果可复用的天数。 |
 
-## 命令
+## 隐私
 
-| 命令 | 说明 |
-|---|---|
-| `markdownAiTranslator.translateDocument` | 翻译当前 Markdown 文档（编辑器标题栏地球按钮）。 |
-| `markdownAiTranslator.retranslateDocument` | 忽略缓存重新翻译。 |
-| `markdownAiTranslator.translateSelection` | 翻译 Markdown 编辑器中的选中文本。 |
-| `markdownAiTranslator.setApiKey` | 将 API Key 存入 SecretStorage。 |
-| `markdownAiTranslator.clearApiKey` | 清除已保存的 API Key。 |
-| `markdownAiTranslator.openSettings` | 打开本扩展的设置。 |
+- 当打开翻译预览、重新翻译、编辑已打开预览的文档或翻译选区时，扩展宿主可能向配置的端点发送文本片段、语言配置、系统提示词、模型 ID 和该端点的鉴权请求头。提供商如何处理与保留数据取决于其条款。
+- API Key 存在 VS Code SecretStorage，按规范化的 API 端点区分。**清除 API Key** 会移除当前端点的凭据和旧版未绑定端点的条目。请避免把密钥写进 URL、设置、提示词或文件正文。
+- 扩展会在 VS Code 本地状态中保存译文缓存。关掉缓存仅停止后续读写，旧数据在关闭缓存或过期后仍可能留在磁盘。扩展本身没有实现遥测。
+- Webview 对脚本使用 nonce，并对展示 HTML 做清洗。文档中的远程图片可能直接发起 HTTP(S) 请求。打开链接也可能访问目标站点。
 
-## 设置
+## 开发与许可证
 
-| 设置项 | 默认值 | 说明 |
-|---|---|---|
-| `markdownAiTranslator.apiBaseUrl` | `https://api.openai.com/v1` | OpenAI 兼容接口地址（Ollama 用 `http://localhost:11434/v1`）。 |
-| `markdownAiTranslator.model` | `gpt-4o-mini` | 模型名称。 |
-| `markdownAiTranslator.sourceLanguage` | `auto` | 源语言（`auto` 自动检测）。 |
-| `markdownAiTranslator.targetLanguage` | `简体中文` | 目标语言。 |
-| `markdownAiTranslator.systemPrompt` | 技术翻译提示词 | 可自定义的多行 System Prompt；请求时替换 `{sourceLanguage}` 与 `{targetLanguage}`。 |
-| `markdownAiTranslator.temperature` | `0.3` | 采样温度。 |
-| `markdownAiTranslator.translationMode` | `translated` | 预览默认模式：`translated` / `bilingual` / `source`。 |
-| `markdownAiTranslator.requestTimeout` | `60000` | 单请求超时（毫秒）。 |
-| `markdownAiTranslator.maxConcurrency` | `3` | API 请求最大并发数。 |
-| `markdownAiTranslator.maxTokensPerRequest` | `4000` | 每次请求的近似 token 预算（分块大小）。 |
-| `markdownAiTranslator.maxRetries` | `2` | 失败/无效响应的重试次数（指数退避）。 |
-| `markdownAiTranslator.cacheEnabled` | `true` | 本地缓存翻译结果。 |
-| `markdownAiTranslator.cacheTtlDays` | `30` | 缓存保留天数。 |
-
-## 安全模型
-
-- API Key 仅保存在 `ExtensionContext.secrets`（VS Code SecretStorage）中：
-  不写入 `settings.json`、不进入 Webview 的 HTML 或消息、不写入日志。
-- 所有 API 请求由扩展宿主发起；Webview 无法联网
-  （`connect-src 'none'`）。
-- 预览 Webview 使用带一次性 nonce 的严格 CSP、渲染前 HTML 清洗、
-  `asWebviewUri` 处理本地资源。
-
-## 开发
-
-```bash
-npm install          # 见下方说明
-npm run compile      # tsc --noEmit
-npm run lint         # eslint
-npm run test         # vitest（不消耗真实 API 额度）
-npm run build        # esbuild 打包 -> dist/
-npm run package      # 构建 + vsce 打包 -> .vsix
-```
-
-- 开发宿主：VS Code 中按 F5（`Run Extension (Dev Host)`），或
-  `code --extensionDevelopmentPath=<本目录> sample/demo.md`。
-- 自动冒烟测试：
-  `MDT_SMOKE=1 code --extensionDevelopmentPath=<本目录>`——扩展会自动
-  检查配置、SecretStorage、Markdown 管线、翻译服务（假 Provider，无网络）、
-  Webview HTML 安全，写出 `smoke-report.json` 后关闭窗口。
-- 说明：若你的网络无法访问 `registry.npmjs.org`，生成的
-  `package-lock.json` 中的 tarball 地址可能指向 `registry.npmmirror.com`
-  镜像；可访问该镜像的任何网络都能安装。需要时可用
-  `npm install --registry=https://registry.npmjs.org` 重新生成。
-
-## 本地安装与手动验证
-
-1. `npm run package` → 生成 `markdown-ai-translator-0.1.0.vsix`。
-2. VS Code：扩展面板 → `…` →「从 VSIX 安装…」。
-3. 验证清单：
-   - 地球按钮**仅**在 Markdown 文件的编辑器标题栏出现；
-   - Set API Key 后密钥被安全保存（`settings.json` 中没有密钥、输出
-     日志中不出现密钥）；
-   - 全文翻译、双语对照、模式切换、重新翻译、取消均正常；
-   - 代码块、行内代码、链接、图片、表格、数学公式在翻译后完好无损；
-   - 预览内划词翻译与编辑器选区翻译正常；
-   - 编辑文档后预览刷新，且只重译变化的部分。
-
-## 发布状态（待确认事项）
-
-- **Publisher**（当前占位为 `brakerham`）：发布前须与实际的 Marketplace
-  发布者账号核对。
-- **许可证**：暂用 MIT，首次发布前请确认。
-- **图标**：当前为占位设计，正式品牌视觉待定。
-- 发布需要 `vsce login` 与 Marketplace 发布者权限；未经最终确认不会
-  向 Marketplace 发布。
-
-完整发布清单见 [docs/PUBLISHING.md](docs/PUBLISHING.md)。
-
-## 许可证
+使用 Node.js 24。执行 `npm ci`、`npm run compile`、`npm run lint`、`npm test` 和 `npm run package`。在 VS Code 启动 Extension Development Host 后可打开[示例文档](sample/demo.md)。[发布指南](docs/PUBLISHING.md)提供验证步骤。
 
 [MIT](LICENSE)

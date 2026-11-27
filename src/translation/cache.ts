@@ -45,7 +45,7 @@ export class PersistentTranslationCache implements TranslationCache {
 
   constructor(
     private readonly memento: MementoLike,
-    private readonly ttlDays: number,
+    private readonly ttlDays: number | (() => number),
     private readonly logger?: Logger,
   ) {}
 
@@ -56,7 +56,8 @@ export class PersistentTranslationCache implements TranslationCache {
     if (!entry || typeof entry.v !== 'string' || typeof entry.t !== 'number') {
       return undefined;
     }
-    if (Date.now() - entry.t >= this.ttlDays * MS_PER_DAY) {
+    const ttl = typeof this.ttlDays === 'number' ? this.ttlDays : this.ttlDays();
+    if (Date.now() - entry.t >= ttl * MS_PER_DAY) {
       // Expired: drop from the in-memory map; persisted on the next set/clear.
       delete entries[key];
       return undefined;

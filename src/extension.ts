@@ -20,7 +20,7 @@ import { StatusCenter } from './preview/statusCenter';
 import { SidebarViewProvider } from './sidebar/sidebarView';
 import { FakeProvider } from './testing/fakeProvider';
 import { PersistentTranslationCache } from './translation/cache';
-import { OpenAICompatibleProvider } from './translation/openaiProvider';
+import { completionEndpoint, OpenAICompatibleProvider } from './translation/openaiProvider';
 import { TranslationService } from './translation/service';
 import { TranslationError } from './translation/types';
 import { isInsideFencedCodeBlock } from './utils/fenceDetection';
@@ -42,12 +42,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const logger = new VsCodeLogger();
   const configProvider = new ConfigProvider(context.secrets);
   const statusCenter = new StatusCenter();
-  const config0 = configProvider.read();
-  const cache = new PersistentTranslationCache(context.globalState, config0.cacheTtlDays, logger);
+  const cache = new PersistentTranslationCache(context.globalState, () => configProvider.read().cacheTtlDays, logger);
   const pipeline = new MarkdownPipeline({ logger });
   const provider = new OpenAICompatibleProvider({
-    baseUrl: config0.apiBaseUrl,
-    getApiKey: () => configProvider.getApiKey(),
+    getApiKey: (endpoint) => configProvider.getApiKey(endpoint),
     logger,
   });
   const service = new TranslationService(provider, logger);
@@ -76,21 +74,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_TYPE, sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    vscode.commands.registerCommand(COMMANDS.translateDocument, (uri?: vscode.Uri) => {
-      void translateDocumentCommand(uri, false);
-    }),
-    vscode.commands.registerCommand(COMMANDS.retranslateDocument, (uri?: vscode.Uri) => {
-      void translateDocumentCommand(uri, true);
-    }),
-    vscode.commands.registerCommand(COMMANDS.translateSelection, () => {
-      void translateSelectionCommand();
-    }),
-    vscode.commands.registerCommand(COMMANDS.setApiKey, () => {
-      void setApiKeyCommand();
-    }),
-    vscode.commands.registerCommand(COMMANDS.clearApiKey, () => {
-      void clearApiKeyCommand();
-    }),
+    vscode.commands.registerCommand(COMMANDS.translateDocument, (uri?: vscode.Uri) => reportCommandFailure(translateDocumentCommand(uri, false))),
+    vscode.commands.registerCommand(COMMANDS.retranslateDocument, (uri?: vscode.Uri) => reportCommandFailure(translateDocumentCommand(uri, true))),
+    vscode.commands.registerCommand(COMMANDS.translateSelection, () => reportCommandFailure(translateSelectionCommand())),
+    vscode.commands.registerCommand(COMMANDS.setApiKey, () => reportCommandFailure(setApiKeyCommand())),
+    vscode.commands.registerCommand(COMMANDS.clearApiKey, () => reportCommandFailure(clearApiKeyCommand())),
     vscode.commands.registerCommand(COMMANDS.openSettings, () => {
       void vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${EXTENSION_ID}`);
     }),
@@ -106,7 +94,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   logger.info(`Markdown AI Translator activated (VS Code ${vscode.version})`);
 
-  if (process.env.MDT_SMOKE === '1') {
+  if (context.extensionMode !== vscode.ExtensionMode.Production && process.env.MDT_SMOKE === '1') {
     const watchdog = setTimeout(() => {
       try {
         fs.writeFileSync(
@@ -140,11 +128,20 @@ function requireServices(): Services {
 /* Commands                                                            */
 /* ------------------------------------------------------------------ */
 
+async function reportCommandFailure(command: Promise<void>): Promise<void> {
+  try {
+    await command;
+  } catch (error) {
+    const message = error instanceof UserError ? error.message : 'The command could not be completed. Check the extension settings.';
+    void vscode.window.showErrorMessage(message);
+  }
+}
+
 async function translateDocumentCommand(uri: vscode.Uri | undefined, force: boolean): Promise<void> {
   const s = requireServices();
   const document = await resolveMarkdownDocument(uri);
   if (!document) return;
-  if (!(await s.configProvider.getApiKey())) {
+  if (!(await s.configProvider.hasApiKey())) {
     await showMissingKeyError();
     return;
   }
@@ -167,7 +164,7 @@ async function translateSelectionCommand(): Promise<void> {
     return;
   }
   const text = editor.document.getText(editor.selection);
-  if (!(await s.configProvider.getApiKey())) {
+  if (!(await s.configProvider.hasApiKey())) {
     await showMissingKeyError();
     return;
   }
@@ -205,10 +202,15 @@ async function translateSelectionCommand(): Promise<void> {
 
 async function setApiKeyCommand(): Promise<void> {
   const s = requireServices();
+  let endpoint: string;
+  try {
+    endpoint = completionEndpoint(s.configProvider.read().apiBaseUrl);
+  } catch {
+    throw new UserError('Set a valid API base URL in User Settings before saving an API key.');
+  }
   const key = await vscode.window.showInputBox({
     title: 'Markdown AI Translator: Set API Key',
-    prompt:
-      'Paste your OpenAI-compatible API key. It is stored in VS Code SecretStorage and never written to settings.json.',
+    prompt: `Save the API key for ${endpoint} in VS Code SecretStorage.`,
     password: true,
     ignoreFocusOut: true,
     placeHolder: 'sk-…',
@@ -218,8 +220,8 @@ async function setApiKeyCommand(): Promise<void> {
     void vscode.window.showErrorMessage('API key cannot be empty.');
     return;
   }
-  await s.configProvider.setApiKey(key);
-  s.statusCenter.publishConfig({ hasApiKey: true });
+  await s.configProvider.setApiKey(key, endpoint);
+  s.statusCenter.publishConfig({ hasApiKey: await s.configProvider.hasApiKey() });
   void vscode.window.showInformationMessage('API key saved securely in SecretStorage.');
 }
 
@@ -326,9 +328,14 @@ async function runSmokeTest(context: vscode.ExtensionContext): Promise<void> {
 
   await run('secrets.roundtrip', async () => {
     const probe = `smoke-${Date.now()}`;
-    await s.configProvider.setApiKey(probe);
-    const read = await s.configProvider.getApiKey();
-    await s.configProvider.clearApiKey();
+    const probeKey = 'markdownAiTranslator.smokeProbe';
+    let read: string | undefined;
+    try {
+      await context.secrets.store(probeKey, probe);
+      read = await context.secrets.get(probeKey);
+    } finally {
+      await context.secrets.delete(probeKey);
+    }
     if (read !== probe) throw new Error('secret mismatch');
   });
 
