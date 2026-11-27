@@ -31,11 +31,11 @@ export class PreviewManager {
     const key = document.uri.toString();
     const existing = this.panels.get(key);
     if (existing) {
-      existing.reveal();
+      existing.reveal(document);
       if (options.force) await existing.refresh(true);
       return existing;
     }
-    const panel = new TranslationPreviewPanel({ ...this.deps, document });
+    const panel = new TranslationPreviewPanel({ ...this.deps, document, force: options.force });
     this.panels.set(key, panel);
     panel.onDidDispose(() => this.panels.delete(key));
     return panel;

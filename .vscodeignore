@@ -7,7 +7,7 @@ sample/**
 scripts/**
 node_modules/**
 esbuild.mjs
-vitest.config.ts
+vitest.config.mts
 tsconfig.json
 eslint.config.mjs
 install.log
@@ -15,3 +15,9 @@ smoke-report.json
 *.log
 *.vsix
 .github/**
+**/*.map
+.gitignore
+package-lock.json
+docs/RELEASE-READINESS.md
+**/*.build.json
+licenses/**

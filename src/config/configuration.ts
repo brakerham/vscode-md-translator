@@ -4,7 +4,9 @@
  * never sent to webviews.
  */
 import * as vscode from 'vscode';
-import { CONFIG_KEYS, CONFIG_SECTION, DEFAULTS, SECRET_API_KEY } from '../common/constants';
+import { createHash } from 'node:crypto';
+import { completionEndpoint } from '../translation/openaiProvider';
+import { CONFIG_KEYS, CONFIG_SECTION, DEFAULTS, DEFAULT_SYSTEM_PROMPT, SECRET_API_KEY } from '../common/constants';
 import type { TranslationMode } from '../common/types';
 import type { TranslationCache, TranslateOptions } from '../translation/types';
 
@@ -53,7 +55,7 @@ export class ConfigProvider {
           this.onDidChangeEmitter.fire(this.read());
         }
       }),
-      this.secrets.onDidChange(() => this.onDidChangeSecretsEmitter.fire()),
+        this.secrets.onDidChange(() => this.onDidChangeSecretsEmitter.fire()),
     );
   }
 
@@ -65,7 +67,7 @@ export class ConfigProvider {
       model: cfg.get<string>(CONFIG_KEYS.model) || DEFAULTS.model,
       sourceLanguage: cfg.get<string>(CONFIG_KEYS.sourceLanguage) || DEFAULTS.sourceLanguage,
       targetLanguage: cfg.get<string>(CONFIG_KEYS.targetLanguage) || DEFAULTS.targetLanguage,
-      systemPrompt: cfg.get<string>(CONFIG_KEYS.systemPrompt) || '',
+      systemPrompt: cfg.get<string>(CONFIG_KEYS.systemPrompt) ?? DEFAULT_SYSTEM_PROMPT,
       temperature: cfg.get<number>(CONFIG_KEYS.temperature) ?? DEFAULTS.temperature,
       translationMode: normalizeMode(cfg.get<string>(CONFIG_KEYS.translationMode)),
       requestTimeout: cfg.get<number>(CONFIG_KEYS.requestTimeout) ?? DEFAULTS.requestTimeout,
@@ -80,6 +82,7 @@ export class ConfigProvider {
   /** Maps an AppConfig to translation service options. */
   toTranslateOptions(config: AppConfig, extra: TranslateOptionsExtra = {}): TranslateOptions {
     return {
+      apiBaseUrl: config.apiBaseUrl,
       systemPrompt: config.systemPrompt,
       sourceLanguage: config.sourceLanguage,
       targetLanguage: config.targetLanguage,
@@ -96,19 +99,28 @@ export class ConfigProvider {
     };
   }
 
-  async getApiKey(): Promise<string | undefined> {
-    return this.secrets.get(SECRET_API_KEY);
+  private apiKeyName(endpoint: string): string {
+    return `${SECRET_API_KEY}.${createHash('sha256').update(endpoint).digest('hex')}`;
+  }
+
+  async getApiKey(endpoint?: string): Promise<string | undefined> {
+    return this.secrets.get(this.apiKeyName(endpoint ?? completionEndpoint(this.read().apiBaseUrl)));
   }
 
   async hasApiKey(): Promise<boolean> {
-    return Boolean(await this.getApiKey());
+    try {
+      return Boolean(await this.getApiKey());
+    } catch {
+      return false;
+    }
   }
 
-  async setApiKey(key: string): Promise<void> {
-    await this.secrets.store(SECRET_API_KEY, key.trim());
+  async setApiKey(key: string, endpoint: string): Promise<void> {
+    await this.secrets.store(this.apiKeyName(endpoint), key.trim());
   }
 
   async clearApiKey(): Promise<void> {
+    await this.secrets.delete(this.apiKeyName(completionEndpoint(this.read().apiBaseUrl)));
     await this.secrets.delete(SECRET_API_KEY);
   }
 

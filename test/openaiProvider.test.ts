@@ -278,3 +278,46 @@ describe('OpenAICompatibleProvider.translateBatch', () => {
     expect((error as Error).message).not.toContain('test-key');
   });
 });
+
+describe('provider release boundaries', () => {
+  it('uses the endpoint snapshot for credential lookup and disables redirects', async () => {
+    const getApiKey = vi.fn(async () => 'fixture-only');
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse({ translations: { s1: 'T1', s2: 'T2' } }));
+    const provider = providerWith(fetchImpl, { getApiKey });
+    const apiBaseUrl = 'http://127.0.0.1:1234/v1/';
+    await provider.translateBatch(entries(), { ...ctx, apiBaseUrl }, { timeoutMs: 5000 });
+    expect(getApiKey).toHaveBeenCalledWith('http://127.0.0.1:1234/v1/chat/completions');
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:1234/v1/chat/completions', expect.objectContaining({ redirect: 'error' }));
+  });
+
+  it('rejects an unsupported endpoint before looking up credentials or making a request', async () => {
+    const getApiKey = vi.fn(async () => 'fixture-only');
+    const fetchImpl = vi.fn<typeof fetch>(async () => jsonResponse({}));
+    const provider = providerWith(fetchImpl, { getApiKey });
+    await expect(provider.translateBatch(entries(), { ...ctx, apiBaseUrl: 'http://api.example.com/v1' }, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ kind: 'config' });
+    expect(getApiKey).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('classifies a stalled response body as a timeout', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        init?.signal?.addEventListener('abort', () => controller.error(init.signal?.reason), { once: true });
+      },
+    })));
+    await expect(providerWith(fetchImpl).translateBatch(entries(), ctx, { timeoutMs: 25 }))
+      .rejects.toMatchObject({ kind: 'timeout' });
+  });
+
+  it('reports HTTP status without including a private provider payload', async () => {
+    const payload = 'fixture-only private translation input';
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(payload, { status: 500 }));
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const provider = providerWith(fetchImpl, { logger });
+    await expect(provider.translateBatch(entries(), ctx, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ kind: 'http', statusCode: 500, message: 'HTTP 500 from the API provider.' });
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+});

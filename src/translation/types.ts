@@ -4,6 +4,7 @@
  */
 
 export interface ProviderContext {
+  apiBaseUrl?: string;
   systemPrompt: string;
   sourceLanguage: string;
   targetLanguage: string;
@@ -41,6 +42,7 @@ export interface TranslationProvider {
 }
 
 export type ProviderErrorKind =
+  | 'config'
   | 'auth'
   | 'rate-limited'
   | 'http'
@@ -95,6 +97,7 @@ export interface SegmentEntry {
 }
 
 export interface TranslateOptions {
+  apiBaseUrl?: string;
   systemPrompt: string;
   sourceLanguage: string;
   targetLanguage: string;

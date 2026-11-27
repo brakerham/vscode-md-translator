@@ -6,22 +6,22 @@
  * every parse; tokens are fresh per parse and the registered renderer rules
  * are stateless, so sharing the instance is safe. Tokens are shared between
  * the source and translated renders of a document (translations are written
- * back onto the tokens), so the token structure can never diverge.
+ * back onto ranges associated with the tokens), so their structure stays shared.
  */
 import MarkdownIt from 'markdown-it';
-import type Token from 'markdown-it/lib/token';
+import type { Token } from 'markdown-it';
 import anchor from 'markdown-it-anchor';
 import taskLists from 'markdown-it-task-lists';
 import frontMatter from 'markdown-it-front-matter';
-import katexPlugin from 'markdown-it-katex';
+import texmath from 'markdown-it-texmath';
+import katex from 'katex';
 import type { Logger, SegmentKind } from '../common/types';
 import { extractSegments } from './extractor';
 import { sanitizeRenderedHtml } from './sanitize';
 
 /**
  * One translatable text run. Translation results are applied by writing the
- * translation back onto the referenced token (meta.translation for text
- * tokens, meta.altTranslation for image alt text).
+ * translation back onto a text range associated with the referenced token.
  */
 export interface Segment {
   /** Stable unique id within one extraction run, e.g. "s1", "s2", ... */
@@ -34,6 +34,8 @@ export interface Segment {
   token: Token;
   /** When set, the translation targets this attribute of the token (image alt). */
   attr?: 'alt';
+  start: number;
+  end: number;
 }
 
 export interface ExtractResult {
@@ -53,23 +55,35 @@ export interface RenderOptions {
 }
 
 /** Environment handed to the renderer rules; selects src vs translated text. */
-interface RenderEnv {
-  renderVersion: 'src' | 'trans';
+type MarkdownParser = ReturnType<typeof MarkdownIt>;
+
+type Replacements = Map<number, { end: number; text: string }>;
+
+function translatedText(source: string, replacements?: Replacements): string {
+  if (!replacements) return source;
+  let offset = 0;
+  let result = '';
+  for (const [start, replacement] of [...replacements].sort(([a], [b]) => a - b)) {
+    result += source.slice(offset, start) + replacement.text;
+    offset = replacement.end;
+  }
+  return result + source.slice(offset);
 }
 
 export class MarkdownDocument {
-  private readonly md: MarkdownIt;
+  private readonly md: MarkdownParser;
   private readonly tokens: Token[];
   private readonly logger?: Logger;
 
   /** Segments of the last extractSegments() run. */
   private segments: Segment[] = [];
+  private readonly translations = new Map<Token, Replacements>();
   /** Block indexes that received at least one segment (last extraction run). */
   private translatedBlockIndexes: number[] = [];
   /** Number of marked blocks (last extraction run). */
   private markedBlockCount = 0;
 
-  constructor(md: MarkdownIt, tokens: Token[], logger?: Logger) {
+  constructor(md: MarkdownParser, tokens: Token[], logger?: Logger) {
     this.md = md;
     this.tokens = tokens;
     this.logger = logger;
@@ -82,6 +96,7 @@ export class MarkdownDocument {
    */
   extractSegments(): ExtractResult {
     const result = extractSegments(this.tokens);
+    this.translations.clear();
     this.segments = result.segments;
     this.markedBlockCount = result.blockCount;
     this.translatedBlockIndexes = Array.from(new Set(result.segments.map((s) => s.blockIndex))).sort(
@@ -102,18 +117,18 @@ export class MarkdownDocument {
       if (value === undefined || value.length === 0) {
         continue;
       }
-      const meta = (segment.token.meta ??= {});
-      if (segment.attr === 'alt') {
-        meta.altTranslation = value;
-      } else {
-        meta.translation = value;
+      let replacements = this.translations.get(segment.token);
+      if (!replacements) {
+        replacements = new Map();
+        this.translations.set(segment.token, replacements);
       }
+      replacements.set(segment.start, { end: segment.end, text: value });
     }
   }
 
   /** Renders sanitized HTML (source or translated version). */
   render(options: RenderOptions): string {
-    const env: RenderEnv = { renderVersion: options.version };
+    const env = { translations: options.version === 'trans' ? this.translations : undefined };
     const html = this.md.renderer.render(this.tokens, this.md.options, env);
     return sanitizeRenderedHtml(html, options.resolveImageSrc, this.logger);
   }
@@ -130,7 +145,7 @@ export class MarkdownDocument {
 }
 
 export class MarkdownPipeline {
-  private readonly md: MarkdownIt;
+  private readonly md: MarkdownParser;
   private readonly logger?: Logger;
 
   constructor(options?: { logger?: Logger }) {
@@ -145,7 +160,7 @@ export class MarkdownPipeline {
   }
 
   /** Builds the single shared markdown-it instance with all plugins and rules. */
-  private createMarkdownIt(): MarkdownIt {
+  private createMarkdownIt(): MarkdownParser {
     const md = new MarkdownIt({
       html: true,
       linkify: true,
@@ -156,25 +171,21 @@ export class MarkdownPipeline {
     md.use(taskLists);
     // markdown-it-front-matter requires a callback option (it receives the
     // parsed YAML); pass a no-op so the plugin never crashes.
-    md.use(frontMatter, () => undefined);
-    md.use(katexPlugin, { throwOnError: false });
+    md.use(frontMatter as unknown as (parser: MarkdownParser, callback: () => void) => void, () => undefined);
+    md.use(texmath, { engine: katex, delimiters: 'dollars', katexOptions: { throwOnError: false, trust: false, output: 'html' } });
     this.registerRendererRules(md);
     return md;
   }
 
   /** Registers the custom renderer rules used by MarkdownDocument.render. */
-  private registerRendererRules(md: MarkdownIt): void {
+  private registerRendererRules(md: MarkdownParser): void {
     const escapeHtml = md.utils.escapeHtml;
 
     // Text: swap in the translation when rendering the translated version.
     md.renderer.rules.text = (tokens, idx, _options, env) => {
       const token = tokens[idx];
-      const content =
-        env.renderVersion === 'trans' &&
-        typeof token.meta?.translation === 'string' &&
-        token.meta.translation.length > 0
-          ? token.meta.translation
-          : token.content;
+      const translations = env?.translations as ReadonlyMap<Token, Replacements> | undefined;
+      const content = translatedText(token.content, translations?.get(token));
       return escapeHtml(content);
     };
 
@@ -185,16 +196,14 @@ export class MarkdownPipeline {
     // empty); token.content carries the concatenated alt text.
     md.renderer.rules.image = (tokens, idx, _options, env) => {
       const token = tokens[idx];
-      const attrAlt = token.attrGet('alt') ?? '';
+      const attrAlt = String(token.attrGet('alt') ?? '');
       const fallbackAlt = token.content ?? '';
       const sourceAlt = attrAlt.trim().length > 0 ? attrAlt : fallbackAlt;
-      const alt =
-        env.renderVersion === 'trans' && typeof token.meta?.altTranslation === 'string'
-          ? token.meta.altTranslation
-          : sourceAlt;
-      const src = token.attrGet('src') ?? '';
+      const translations = env?.translations as ReadonlyMap<Token, Replacements> | undefined;
+      const alt = translatedText(sourceAlt, translations?.get(token));
+      const src = String(token.attrGet('src') ?? '');
       const title = token.attrGet('title');
-      const titlePart = title === null ? '' : ` title="${escapeHtml(title)}"`;
+      const titlePart = title === null ? '' : ` title="${escapeHtml(String(title))}"`;
       return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}"${titlePart}>`;
     };
 
@@ -203,7 +212,8 @@ export class MarkdownPipeline {
     // on token.meta and requires a callback option to be passed to use().
     md.renderer.rules.front_matter = (tokens, idx) => {
       const token = tokens[idx];
-      const content = typeof token.meta === 'string' && token.meta.length > 0 ? token.meta : token.content;
+      const raw: unknown = token.meta;
+      const content = typeof raw === 'string' ? raw : token.content;
       return `<div class="mdt-frontmatter">${escapeHtml(content)}</div>`;
     };
   }

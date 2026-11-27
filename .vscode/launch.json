@@ -5,8 +5,12 @@
       "name": "Run Extension (Dev Host)",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
       "preLaunchTask": "npm: build"
     },
     {
@@ -15,10 +19,15 @@
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
+        "--extensionTestsPath=${workspaceFolder}/scripts/smoke-entry.cjs",
         "${workspaceFolder}/sample/demo.md"
       ],
-      "env": { "MDT_SMOKE": "1" },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "env": {
+        "MDT_SMOKE": "1"
+      },
+      "outFiles": [
+        "${workspaceFolder}/dist/**/*.js"
+      ],
       "preLaunchTask": "npm: build"
     }
   ]

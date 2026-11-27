@@ -1,0 +1,34 @@
+name: Release checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run compile
+      - run: npm run lint
+      - run: npm test
+      - run: npm run package
+      - uses: actions/upload-artifact@v5
+        with:
+          name: vsix-${{ matrix.os }}
+          path: '*.vsix'
+          if-no-files-found: error

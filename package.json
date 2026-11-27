@@ -115,9 +115,10 @@
     "views": {
       "markdownAiTranslator": [
         {
-          "type": "markdownAiTranslator.sidebarView",
+          "type": "webview",
           "name": "%views.sidebar%",
-          "icon": "$(globe)"
+          "icon": "$(globe)",
+          "id": "markdownAiTranslator.sidebarView"
         }
       ]
     },
@@ -128,7 +129,8 @@
           "type": "string",
           "default": "https://api.openai.com/v1",
           "order": 1,
-          "markdownDescription": "%config.apiBaseUrl%"
+          "markdownDescription": "%config.apiBaseUrl%",
+          "scope": "machine"
         },
         "markdownAiTranslator.model": {
           "type": "string",
@@ -235,7 +237,7 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "vscode:prepublish": "npm run build",
-    "package": "npm run build && vsce package"
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/markdown-it": "^13.0.9",
@@ -244,18 +246,27 @@
     "@types/vscode": "~1.95.0",
     "@vscode/codicons": "^0.0.36",
     "@vscode/vsce": "^3.2.2",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.17.0",
-    "katex": "^0.16.21",
-    "markdown-it": "^13.0.2",
+    "katex": "^0.19.1",
+    "markdown-it": "^15.0.3",
     "markdown-it-anchor": "^8.6.7",
     "markdown-it-front-matter": "^0.2.4",
-    "markdown-it-katex": "^2.0.3",
     "markdown-it-task-lists": "^2.1.1",
+    "markdown-it-texmath": "^1.0.0",
     "mermaid": "^10.9.3",
     "sanitize-html": "^2.14.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.2",
-    "vitest": "^3.0.5"
+    "vitest": "^5.1.1"
+  },
+  "overrides": {
+    "mermaid": {
+      "katex": "$katex"
+    },
+    "@vscode/vsce": {
+      "glob": "14.0.2",
+      "minimatch": "11.0.1"
+    }
   }
 }
